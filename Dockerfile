@@ -1,26 +1,49 @@
-# --- Stage 1: Build Stage ---
-FROM maven:3.9.6-eclipse-temurin-17 AS build
+# ============================================
+# Stage 1: Build Stage
+# ============================================
+FROM maven:3.9.5-eclipse-temurin-21 AS build
+
 WORKDIR /app
 
-# Copy only the pom.xml first to cache dependencies
+# Copy pom.xml first for dependency caching
 COPY pom.xml .
+
+# Download dependencies
 RUN mvn dependency:go-offline -B
 
-# Copy the source code and build the application
+# Copy source code
 COPY src ./src
+
+# Build the application
 RUN mvn clean package -DskipTests
 
-# --- Stage 2: Runtime Stage ---
-FROM eclipse-temurin:17-jre-alpine
+# ============================================
+# Stage 2: Runtime Stage
+# ============================================
+FROM eclipse-temurin:21-jre-alpine
+
 WORKDIR /app
 
-# Copy only the built JAR from the build stage
+# Install curl for health check
+RUN apk add --no-cache curl
+
+# Create upload directory
+RUN mkdir -p /tmp/uploads/projects && chmod -R 777 /tmp/uploads
+
+# Copy the JAR file
 COPY --from=build /app/target/*.jar app.jar
 
-# Render provides a $PORT environment variable. 
-# We tell Spring Boot to listen on that port.
-ENV PORT=8080
+# Expose port
 EXPOSE 8080
 
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=60s --retries=3 \
+  CMD curl -f http://localhost:8080/actuator/health || exit 1
+
 # Run the application
-ENTRYPOINT ["sh", "-c", "java -Xmx512m -jar app.jar --server.port=${PORT}"]
+ENTRYPOINT ["java", \
+    "-XX:+UseContainerSupport", \
+    "-XX:MaxRAMPercentage=75.0", \
+    "-Djava.security.egd=file:/dev/./urandom", \
+    "-jar", \
+    "app.jar"]
